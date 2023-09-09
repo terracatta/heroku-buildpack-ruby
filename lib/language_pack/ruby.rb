@@ -8,6 +8,7 @@ require "language_pack/ruby_version"
 require "language_pack/helpers/nodebin"
 require "language_pack/helpers/node_installer"
 require "language_pack/helpers/yarn_installer"
+require "language_pack/helpers/bun_installer"
 require "language_pack/helpers/layer"
 require "language_pack/helpers/binstub_check"
 require "language_pack/version"
@@ -42,6 +43,7 @@ class LanguagePack::Ruby < LanguagePack::Base
     @fetchers[:rbx]    = LanguagePack::Fetcher.new(RBX_BASE_URL, @stack)
     @node_installer    = LanguagePack::Helpers::NodeInstaller.new
     @yarn_installer    = LanguagePack::Helpers::YarnInstaller.new
+    @bun_installer     = LanguagePack::Helpers::BunInstaller.new
   end
 
   def name
@@ -375,12 +377,20 @@ EOF
   def setup_profiled(ruby_layer_path: , gem_layer_path: )
     profiled_path = []
 
-    # Rails has a binstub for yarn that doesn't work for all applications
+    # Rails may have binstub for yarn that doesn't work for all applications
     # we need to ensure that yarn comes before local bin dir for that case
     if yarn_preinstalled?
       profiled_path << yarn_preinstall_bin_path.gsub(File.expand_path("."), "$HOME")
     elsif has_yarn_binary?
       profiled_path << "#{ruby_layer_path}/vendor/#{@yarn_installer.binary_path}"
+    end
+
+    # Rails may have binstub for bun that doesn't work for all applications
+    # we need to ensure that bun comes before local bin dir for that case
+    if bun_preinstalled?
+      profiled_path << bun_preinstall_bin_path.gsub(File.expand_path("."), "$HOME")
+    elsif has_bun_binary?
+      profiled_path << "#{ruby_layer_path}/vendor/#{@bun_installer.binary_path}"
     end
     profiled_path << "$HOME/bin" # /app in production
     profiled_path << "#{gem_layer_path}/#{bundler_binstubs_path}" # Binstubs from bundler, eg. vendor/bundle/bin
@@ -635,7 +645,7 @@ EOF
   # default set of binaries to install
   # @return [Array] resulting list
   def binaries
-    add_node_js_binary + add_yarn_binary
+    add_node_js_binary + add_yarn_binary + add_bun_binary
   end
 
   # vendors binaries into the slug
@@ -666,6 +676,13 @@ EOF
           @yarn_installer.install
           yarn_path = File.absolute_path("#{vendor_dir}/#{@yarn_installer.binary_path}")
           ENV["PATH"] = "#{yarn_path}:#{ENV["PATH"]}"
+        end
+      elsif name.match(/^bun\-/)
+        FileUtils.mkdir_p("../vendor")
+        Dir.chdir("../vendor") do |vendor_dir|
+          @bun_installer.install
+          bun_path = File.absolute_path("#{vendor_dir}/#{@bun_installer.binary_path}")
+          ENV["PATH"] = "#{bun_path}:#{ENV["PATH"]}"
         end
       else
         @fetchers[:buildpack].fetch_untar("#{name}.tgz")
@@ -1034,6 +1051,16 @@ params = CGI.parse(uri.query || "")
     end
   end
 
+  def add_bun_binary
+    return [] if bun_preinstalled?
+
+    if Pathname(build_path).join("bun.lockb").exist?
+      [@bun_installer.name]
+    else
+      []
+    end
+  end
+
   def has_yarn_binary?
     add_yarn_binary.any?
   end
@@ -1082,6 +1109,26 @@ params = CGI.parse(uri.query || "")
 
   def yarn_not_preinstalled?
     !yarn_preinstalled?
+  end
+
+  # Example `tmp/build_8523f77fb96a956101d00988dfeed9d4/.heroku/bun/bin/bun`
+  def bun_preinstall_binary_path
+    return @bun_preinstall_binary_path if defined?(@bun_preinstall_binary_path)
+
+    path = run("which bun").strip
+    if path && $?.success?
+      @bun_preinstall_binary_path = path
+    else
+      @bun_preinstall_binary_path = false
+    end
+  end
+
+  def bun_preinstalled?
+    bun_preinstall_binary_path
+  end
+
+  def bun_not_preinstalled?
+    !bun_preinstalled?
   end
 
   def run_assets_precompile_rake_task

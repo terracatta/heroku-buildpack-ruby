@@ -38,6 +38,11 @@ module LanguagePack
       run!("#{curl} - | tar jxf - #{files_to_extract}", error_class: FetchError)
     end
 
+    def fetch_unzip(path, files_to_extract = nil)
+      curl = curl_command("#{@host_url.join(path)} -s -o")
+      run!("#{curl} - | unzip -oqd - #{files_to_extract}", error_class: FetchError)
+    end
+
     private
     def curl_command(command)
       "set -o pipefail; curl -L --fail --retry 5 --retry-delay 1 --connect-timeout #{curl_connect_timeout_in_seconds} --max-time #{curl_timeout_in_seconds} #{command}"
